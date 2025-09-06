@@ -1,0 +1,28 @@
+# --- Archivos de entorno ---
+.env
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# --- Entornos virtuales ---
+.venv/
+env/
+venv/
+
+# --- Configuración del editor ---
+.vscode/
+.idea/
+
+# --- Archivos temporales / logs ---
+*.log
+*.tmp
+*.swp
+*.bak
+
+# --- Docker ---
+#.dockerignore

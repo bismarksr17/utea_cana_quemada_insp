@@ -1,0 +1,10 @@
+pandas
+geopandas
+shapely
+contextily
+matplotlib
+docxtpl
+docx
+python-dotenv
+gevent
+socketIO_client
