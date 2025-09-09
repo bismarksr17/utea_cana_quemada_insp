@@ -8,3 +8,5 @@ docx
 python-dotenv
 gevent
 socketIO_client
+sqlalchemy
+psycopg2
