@@ -77,7 +77,7 @@ def ejecutar_query_sql(id_project, query, tipo_sql):
 # retorna cuantas filas fueron afectadas
 def ejecutar_query_por_id(id_project, id_query, tipo_sql):
     # obtiene el query basado en el id_project y el id_query
-    get_query = amigocloud.get(f'https://app.amigocloud.com/api/v1/projects/{id_project}/queries/{id_query}')
+    get_query = amigocloud.get(f'https://app.amigocloud.com/api/v1/projects/{id_project}/queries/{id_query}', timeout=15)
     # se extrae solo el texto del query
     query = get_query['query']
     # ejecuta el query_sql con metodo post y guarda la respuesta
@@ -91,13 +91,13 @@ def convertir_dict_obj(diccionario, name):
     return collections.namedtuple(name, diccionario.keys())(*diccionario.values())
 
 def buscar_nuevos():
-    # revisa y extiste registros nuevos (campo reporte_generado en false)
-    rec_nuevos = ejecutar_query_por_id(PROYECTO_ID, BUSCAR_REG_NUEVOS, 'get')
-    # se queda con la parte de data
-    rec_nuevos = rec_nuevos['data']
-    # extrae el id de los nuevos regitros
-    id_nuevos = [i['id'] for i in rec_nuevos]
-    return id_nuevos
+    # revisa si extiste al menos un registros nuevos, retorna solo uno
+    query = 'select id, canhero, fecha_registro from dataset_351059 where informe_generado=false limit 1'
+    url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
+    query_sql = {'query': query}
+    resultado_get = amigocloud.get(url_proyecto_sql, query_sql)
+    resultado_get = resultado_get['data']
+    return resultado_get
 
 def ejecutar_scripts_sql():
     # ejecuatar scripts generales para completar campos y recalculos
@@ -272,30 +272,38 @@ def generar_reporte(insp, propiedades, fotos, lista_planos):
     doc.save(PATH_INFORMES + file_name + '.docx')
     return None
 
+def main():
+    while True:
+        reg_nuevos = buscar_nuevos()
+        print(reg_nuevos)
 
-while True:
-    reg_nuevos = buscar_nuevos()
-    if len(reg_nuevos) == 0:
-        print('No se encontraron registros nuevos')
-        continue
-    for i in reg_nuevos:
-        insp = obtener_inspeccion(i)
-        ejecutar_scripts_sql()
-        lotes = obtener_lotes(i)
-        if len(lotes) == 0:
-            print(f'Inspeccion {i} no tiene lotes asignados')
+        '''
+        if len(reg_nuevos) == 0:
+            print('No se encontraron registros nuevos')
             continue
-        # de lotes eliminar todos los duplicados, y solo se queda con el codigo y nombre de propiedad, esto sera el objeto de propiedades que son parte de la inspeccion
-        props = eliminar_duplicados_y_conservar_campos(lotes, 'unidad_01', ['unidad_01', 'unidad_02'])
-        propiedades = propiedades_lotes(props)
-        fotos = obtener_fotos2(insp.amigo_id)
-        
-        if len(fotos) == 0:
-            print(f'Inspeccion {i} no tiene fotos')
-        lista_planos = generar_planos(insp, propiedades)
-        print(insp)
-        # print(propiedades)
-        print(fotos)
-        generar_reporte(insp, propiedades, fotos, lista_planos)
-        cambiar_estado_informe(i)
-        print(f'Informe generado de {insp.canhero}')
+        for i in reg_nuevos:
+            insp = obtener_inspeccion(i)
+            ejecutar_scripts_sql()
+            lotes = obtener_lotes(i)
+            if len(lotes) == 0:
+                print(f'Inspeccion {i} no tiene lotes asignados')
+                continue
+            # de lotes eliminar todos los duplicados, y solo se queda con el codigo y nombre de propiedad, esto sera el objeto de propiedades que son parte de la inspeccion
+            props = eliminar_duplicados_y_conservar_campos(lotes, 'unidad_01', ['unidad_01', 'unidad_02'])
+            propiedades = propiedades_lotes(props)
+            fotos = obtener_fotos2(insp.amigo_id)
+
+            if len(fotos) == 0:
+                print(f'Inspeccion {i} no tiene fotos')
+            lista_planos = generar_planos(insp, propiedades)
+            print(insp)
+            # print(propiedades)
+            print(fotos)
+            generar_reporte(insp, propiedades, fotos, lista_planos)
+            cambiar_estado_informe(i)
+            print(f'Informe generado de {insp.canhero}')
+        '''
+
+
+if __name__ == "__main__":
+    main()
