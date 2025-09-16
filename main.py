@@ -91,50 +91,131 @@ def convertir_dict_obj(diccionario, name):
     return collections.namedtuple(name, diccionario.keys())(*diccionario.values())
 
 def buscar_nuevos():
-    # revisa si extiste al menos un registros nuevos, retorna solo uno
-    query = 'select id, canhero, fecha_registro from dataset_351059 where informe_generado=false limit 1'
+    # busca todos los nuevos registros, retorna una lista de IDs
+    query = 'select id, canhero, fecha_registro from dataset_351059 where informe_generado=false'
     url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
     query_sql = {'query': query}
-    resultado_get = amigocloud.get(url_proyecto_sql, query_sql)
-    resultado_get = resultado_get['data']
-    return resultado_get
+    try:
+        resultado_get = amigocloud.get(url_proyecto_sql, query_sql, timeout=15)
+        resultado_get = resultado_get['data']
+        # extrae los IDs de los nuevos regitros
+        id_nuevos = [i['id'] for i in resultado_get]
+        return id_nuevos
+    except Exception as e:
+        print(f"Error en buscar_nuevos: {e}")
+        return []
 
-def ejecutar_scripts_sql():
-    # ejecuatar scripts generales para completar campos y recalculos
-    exe_cargar_lotes_quema = ejecutar_query_por_id(PROYECTO_ID, CARGAR_LOTES_QUEMA, 'post')
-    exe_calc_area_lotes = ejecutar_query_por_id(PROYECTO_ID, CALC_AREA_LOTES, 'post')
-    exe_calc_total_insp = ejecutar_query_por_id(PROYECTO_ID, CALC_TOTAL_INSP, 'post')
+def cargar_lotes_quema():
+    # inserta los lotes desde catastro a lotes_quema,
+    # solo lotes que un no esten en lotes_quema
+    query = '''INSERT INTO dataset_351061 (unidad_01, unidad_02, unidad_05, id_inspeccion, geometria)
+                SELECT 
+                    cat.unidad_01,
+                    cat.unidad_02,
+                    cat.unidad_05,
+                    insp.id AS id_inspeccion,
+                    cat.wkb_geometry AS geometria
+                FROM 
+                    dataset_351059 insp
+                JOIN 
+                    dataset_377418 cat
+                ON 
+                    ST_Intersects(insp.ubicacion, cat.wkb_geometry)
+                WHERE NOT EXISTS (
+                    SELECT 1 
+                    FROM dataset_351061 lotes 
+                    WHERE lotes.id_inspeccion = insp.id 
+                )'''
+    url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
+    query_sql = {'query': query}
+    try:
+        # .post retorna {'query':'...', 'count':2}, indicando la cantidad de registro modificados
+        resultado_post = amigocloud.post(url_proyecto_sql, query_sql, timeout=15)
+        # si 'count' no existe como key en el dict, retorna -1
+        if 'count' not in resultado_post:
+            return -1
+        # retorn la cantidad de registros afectados
+        return resultado_post['count']
+    except Exception as e:
+        print(f"Error en cargar_lotes_quema: {e}")
+        return -1
+
+def calcular_area_lotes_quema():
+    # actualiza el area de todos los lotes de lotes_quema
+    query = '''UPDATE dataset_351061 SET 
+                area = round(cast(ST_Area(ST_Transform(geometria, 32720))/10000 as numeric),2)'''
+    
+    url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
+    query_sql = {'query': query}
+    try:
+        # .post retorna {'query':'...', 'count':2}, indicando la cantidad de registro modificados
+        resultado_post = amigocloud.post(url_proyecto_sql, query_sql, timeout=15)
+        # si 'count' no existe como key en el dict, retorna -1
+        if 'count' not in resultado_post:
+            return -1
+        # retorn la cantidad de registros afectados
+        return resultado_post['count']
+    except Exception as e:
+        print(f"Error en cargar_lotes_quema: {e}")
+        return -1
+    
+def sumar_total_area_inspeccion(id_insp):
+    # suma todos los lotes de una inspeccion indicada en id_insp
+    query = f'''UPDATE dataset_351059 insp SET
+                    superficie_total = (SELECT sum(area) 
+                                FROM dataset_351061 lotes 
+                                WHERE insp.id=lotes.id_inspeccion),
+                    produccion = (SELECT sum(area) 
+                                FROM dataset_351061 lotes
+                                WHERE insp.id=lotes.id_inspeccion) * rendimiento
+                WHERE insp.id = {id_insp}'''
+    url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
+    query_sql = {'query': query}
+    try:
+        # .post retorna {'query':'...', 'count':1}, indicando la cantidad de registro modificados
+        resultado_post = amigocloud.post(url_proyecto_sql, query_sql, timeout=15)
+        # si 'count' no existe como key en el dict, retorna -1
+        if 'count' not in resultado_post:
+            return -1
+        # retorn la cantidad de registros afectados
+        return resultado_post['count']
+    except Exception as e:
+        print(f"Error en cargar_lotes_quema: {e}")
+        return -1
 
 def obtener_inspeccion(id_insp):
     # seleccionar un registro
     # crear consulta
     query = f'select * from dataset_351059 where id = {id_insp}'
-    # ejecutar consulta
-    inspeccion = ejecutar_query_sql(PROYECTO_ID, query, 'get')
-    # extrae la seccion de data
-    inspeccion = inspeccion['data']
-    # extrae el primer elemento, solo hay un elemento
-    inspeccion = inspeccion[0]
-    # convertion de formato de fechas
-    inspeccion['date'] = convertir_formato_fecha(inspeccion['fecha_registro'])
-    inspeccion['fecha_inspeccion'] = convertir_formato_fecha(inspeccion['fecha_inspeccion'])
-    inspeccion['fecha_quema'] = convertir_formato_fecha(inspeccion['fecha_quema'])
-    # extraccion de codigo y nombre del cañero
-    cod_ca = inspeccion['canhero'].split(' / ')[0]
-    nom_ca = inspeccion['canhero'].split(' / ')[1]
-    # convertir el dict en objeto
-    insp = convertir_dict_obj(inspeccion, 'insp')
-    return insp
+    url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
+    query_sql = {'query': query}
+    try:
+        resultado_get = amigocloud.get(url_proyecto_sql, query_sql, timeout=15)
+        inspeccion = resultado_get['data'][0]
+        # convertion de formato de fechas
+        inspeccion['date'] = convertir_formato_fecha(inspeccion['fecha_registro'])
+        inspeccion['fecha_inspeccion'] = convertir_formato_fecha(inspeccion['fecha_inspeccion'])
+        inspeccion['fecha_quema'] = convertir_formato_fecha(inspeccion['fecha_quema'])
+        # convertir el dict en objeto
+        insp = convertir_dict_obj(inspeccion, 'insp')
+        return insp
+    except Exception as e:
+        print(f"Error en buscar_nuevos: {e}")
+        return None
 
 def obtener_lotes(id_insp):
     # seleccionar todos los lotes marcados con la inspeccion
     # crear consulta
     query = f'select * from dataset_351061 where id_inspeccion = {id_insp}'
-    # ejecutar consulta
-    lotes = ejecutar_query_sql(PROYECTO_ID, query, 'get')
-    # extraer solo la seccion de data
-    lotes = lotes['data']
-    return lotes
+    url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
+    query_sql = {'query': query}
+    try:
+        resultado_get = amigocloud.get(url_proyecto_sql, query_sql, timeout=15)
+        lotes = resultado_get['data']
+        return lotes
+    except Exception as e:
+        print(f"Error en obtener_lotes: {e}")
+        return []
 
 # elimina todos los dic duplicados basandose en "unidad_01", y concerva solo en cop_prop y nom_prop
 # con esto se obtiene un dict de propiedades de la inspeccion
@@ -163,16 +244,6 @@ def propiedades_lotes(props):
     return propiedades
 
 def obtener_fotos(insp_amigo_id):
-    # buscar todas las fotos que son parte de la inspeccion
-    # crear consulta
-    query = f'select s3_filename from gallery_61142 where source_amigo_id = \'{insp_amigo_id}\''
-    # ejecutar consulta
-    fotos = ejecutar_query_sql(PROYECTO_ID, query, 'get')
-    # extrae la seccion de data
-    fotos = fotos['data']
-    return fotos
-
-def obtener_fotos2(insp_amigo_id):
     # buscar todas las fotos que son parte de la inspeccion
     # crear consulta
     query = f'select amigo_id, source_amigo_id, filename from gallery_61142 where source_amigo_id = \'{insp_amigo_id}\''
@@ -276,22 +347,34 @@ def main():
     while True:
         reg_nuevos = buscar_nuevos()
         print(reg_nuevos)
-
-        '''
+        
         if len(reg_nuevos) == 0:
             print('No se encontraron registros nuevos')
             continue
+
+        count_lotes_cargado = cargar_lotes_quema()
+        count_areas_calculadas = calcular_area_lotes_quema()
+
+        if count_lotes_cargado == -1 or count_areas_calculadas == -1:
+            print('Error al cargar lotes quema, o error al actualziar areas de lotes quema')
+            continue
+        
         for i in reg_nuevos:
             insp = obtener_inspeccion(i)
-            ejecutar_scripts_sql()
+            if insp == None:
+                print(f'Error, no se pudo obtener datos de inspeccion: {id}')
+                continue
+            
             lotes = obtener_lotes(i)
             if len(lotes) == 0:
-                print(f'Inspeccion {i} no tiene lotes asignados')
+                print(f'Error, no se pudo obtener lotes quema: {id}')
                 continue
+
+            '''
             # de lotes eliminar todos los duplicados, y solo se queda con el codigo y nombre de propiedad, esto sera el objeto de propiedades que son parte de la inspeccion
             props = eliminar_duplicados_y_conservar_campos(lotes, 'unidad_01', ['unidad_01', 'unidad_02'])
             propiedades = propiedades_lotes(props)
-            fotos = obtener_fotos2(insp.amigo_id)
+            fotos = obtener_fotos(insp.amigo_id)
 
             if len(fotos) == 0:
                 print(f'Inspeccion {i} no tiene fotos')
@@ -302,8 +385,7 @@ def main():
             generar_reporte(insp, propiedades, fotos, lista_planos)
             cambiar_estado_informe(i)
             print(f'Informe generado de {insp.canhero}')
-        '''
-
+            '''
 
 if __name__ == "__main__":
     main()
