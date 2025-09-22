@@ -135,6 +135,7 @@ def cargar_lotes_quema():
         if 'count' not in resultado_post:
             return -1
         # retorn la cantidad de registros afectados
+        print(f'Se ha cargado lotes de quema nuevos.!')
         return resultado_post['count']
     except Exception as e:
         print(f"Error en cargar_lotes_quema: {e}")
@@ -154,6 +155,7 @@ def calcular_area_lotes_quema():
         if 'count' not in resultado_post:
             return -1
         # retorn la cantidad de registros afectados
+        print('Se ha actualziado el area de todos los lotes de quema')
         return resultado_post['count']
     except Exception as e:
         print(f"Error en cargar_lotes_quema: {e}")
@@ -198,9 +200,10 @@ def obtener_inspeccion(id_insp):
         inspeccion['fecha_quema'] = convertir_formato_fecha(inspeccion['fecha_quema'])
         # convertir el dict en objeto
         insp = convertir_dict_obj(inspeccion, 'insp')
+        print(f'Se obtubo el registro de quema para id: {id_insp}')
         return insp
     except Exception as e:
-        print(f"Error en buscar_nuevos: {e}")
+        print(f"Error en buscar_nuevos, id: {id_insp}: {e}")
         return None
 
 def obtener_lotes(id_insp):
@@ -212,9 +215,10 @@ def obtener_lotes(id_insp):
     try:
         resultado_get = amigocloud.get(url_proyecto_sql, query_sql, timeout=15)
         lotes = resultado_get['data']
+        print(f'Se obtubienron lotes de quema para id: {id_insp}')
         return lotes
     except Exception as e:
-        print(f"Error en obtener_lotes: {e}")
+        print(f"Error en obtener_lotes de id: {id_insp}: {e}")
         return []
 
 # elimina todos los dic duplicados basandose en "unidad_01", y concerva solo en cop_prop y nom_prop
@@ -370,9 +374,10 @@ def main():
                 print(f'Error, no se pudo obtener lotes quema: {id}')
                 continue
 
-            '''
             # de lotes eliminar todos los duplicados, y solo se queda con el codigo y nombre de propiedad, esto sera el objeto de propiedades que son parte de la inspeccion
             props = eliminar_duplicados_y_conservar_campos(lotes, 'unidad_01', ['unidad_01', 'unidad_02'])
+            print(props)
+            '''
             propiedades = propiedades_lotes(props)
             fotos = obtener_fotos(insp.amigo_id)
 
