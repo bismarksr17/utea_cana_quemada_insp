@@ -198,6 +198,20 @@ def obtener_inspeccion(id_insp):
         inspeccion['date'] = convertir_formato_fecha(inspeccion['fecha_registro'])
         inspeccion['fecha_inspeccion'] = convertir_formato_fecha(inspeccion['fecha_inspeccion'])
         inspeccion['fecha_quema'] = convertir_formato_fecha(inspeccion['fecha_quema'])
+        if inspeccion['responsable_quema'] == 'Accidental':
+            inspeccion['tipo'] = 'provocado accidentalmente'
+        elif inspeccion['responsable_quema'] == 'Intencional':
+            inspeccion['tipo'] = 'provocado intencinalmente'
+        elif inspeccion['responsable_quema'] == 'Propiedad vecina':
+            cod = inspeccion['canhero_responsable'].split(' / ')[0]
+            nom = inspeccion['canhero_responsable'].split(' / ')[1]
+            if cod == '0':
+                inspeccion['tipo'] = 'provocado en propiedad vecina, responsable de la quema DESCONOCIDO'
+            else:
+                inspeccion['tipo'] = f'provocado en propiedad vecina, responsable de la quema {nom} con codigo cañero {cod}'
+        elif inspeccion['responsable_quema'] == 'Sin determinar':
+            inspeccion['tipo'] = 'no fue posible determinar que o quien provoco el incendio'
+
         # convertir el dict en objeto
         insp = convertir_dict_obj(inspeccion, 'insp')
         print(f'Se obtubo el registro de quema para id: {id_insp}')
@@ -248,14 +262,33 @@ def propiedades_lotes(props, lotes):
     return propiedades
 
 def obtener_fotos(insp_amigo_id):
-    # buscar todas las fotos que son parte de la inspeccion
-    # crear consulta
     query = f'select amigo_id, source_amigo_id, filename from gallery_61142 where source_amigo_id = \'{insp_amigo_id}\''
-    # ejecutar consulta
-    fotos = ejecutar_query_sql(PROYECTO_ID, query, 'get')
-    # extrae la seccion de data
-    fotos = fotos['data']
-    return fotos
+    url_proyecto_sql = f'https://app.amigocloud.com/api/v1/projects/31874/sql'
+    query_sql = {'query': query}
+    try:
+        resultado_get = amigocloud.get(url_proyecto_sql, query_sql, timeout=15)
+        fotos = resultado_get['data']
+        print(f'Se obtubienron {len(fotos)} fotos de quema')
+        return fotos
+    except Exception as e:
+        print(f"Error en obtener fotos de quema: {e}")
+        return []
+    
+def descargar_fotos(fotos):
+    lista_fotos = []
+    for foto in fotos:
+        url_foto = f"https://app.amigocloud.com/api/v1/related_tables/61142/files/{foto['source_amigo_id']}/{foto['amigo_id']}/{foto['filename']}"
+        try:
+            contenido = amigocloud.get(url_foto, raw=True)
+            ruta_salida = PATH_FOTOS + foto['amigo_id'] + '.jpg'
+            with open(ruta_salida, "wb") as f:
+                f.write(contenido)
+            lista_fotos.append(ruta_salida)
+        except Exception as e:
+            print(f"❌ Error al descargar {foto['filename']}: {e}")
+            return []
+    print(f'Se descargaron {len(lista_fotos)} fotos de la quema')
+    return lista_fotos
 
 def cambiar_estado_informe(id_insp):
     # actualizar estado de informe_generado a true
@@ -277,35 +310,25 @@ def generar_planos(insp, propiedades):
         df['geometria'] = df['geometria'].apply(convertir_wkb)
 
         #Convertir a GeoDataFrame
-        data = gpd.GeoDataFrame(df, geometry='geometria', crs="EPSG:32720")
-
-        #data['coords'] = data['geometria'].apply(lambda x: x.representative_point().coords[:])
-        #data['coords'] = [coords[0] for coords in data['coords']]
-
-        #data.crs = "EPSG:4326"
-        #data = data.to_crs(epsg=32720)
-        
-        #data.crs = "EPSG:4326"
-        #data = data.to_crs(epsg=3857)
-        
+        data = gpd.GeoDataFrame(df, geometry='geometria', crs="EPSG:4326")
+        data = data.to_crs("EPSG:32720") # <================================
         fig = plt.figure(figsize=(20,20))
         ax = None
         ax = fig.add_subplot()
-
         data.apply(lambda x: ax.annotate(text=x.unidad_05 + ' \n' + str(x.area) + ' ha', xy=x.geometria.centroid.coords[0], ha='center', va='center', color='black', fontsize=12, weight=1000, bbox=dict(facecolor=(1,1,1,0.3), edgecolor='none', pad=0)), axis=1);
-    
         data.plot(ax=ax, edgecolor='r', facecolor=(0,0,0,0), linewidth=2, figsize=(20,20))
-    
+
         # Cargar la imagen TIFF con rasterio
         with rasterio.open(path_tif) as src:
             extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]  # Límites geoespaciales
             img = src.read([1, 2, 3])  # Leer las bandas RGB
-        # Crear el plano
+        
+        bounds = data.total_bounds  # [xmin, ymin, xmax, ymax]
+        ax.set_xlim([bounds[0] - 400, bounds[2] + 400])
+        ax.set_ylim([bounds[1] - 400, bounds[3] + 400])
+        
+        # carga imagen de fondo
         show(img, transform=src.transform, ax=ax)
-
-        #minx, miny, maxx, maxy = data.total_bounds
-        #ax.set_xlim(minx - 500, maxx + 500)
-        #ax.set_ylim(miny - 400, maxy + 400)
 
         #ax.set_axis_off()
         ax.set_title(str(propiedad.unidad_01) + ' / ' + str(propiedad.unidad_02), fontsize=20)
@@ -315,38 +338,27 @@ def generar_planos(insp, propiedades):
         plt.clf()
     return lista_planos
 
-def generar_reporte(insp, propiedades, fotos, lista_planos):
-    # generar reporte
+def generar_reporte(insp, propiedades, lista_fotos, lista_planos):
     # asignacion de template
     doc = DocxTemplate(PATH_TEMPLATE_INFORME)
-
+    
     #generar lista de InlineImage de planos 
-    lista_InlineImage = []
+    lista_InlineImage_planos = []
     for plano in lista_planos:
-        lista_InlineImage.append(docxtpl.InlineImage(doc, image_descriptor=plano, width=Mm(150)))
+        lista_InlineImage_planos.append(docxtpl.InlineImage(doc, image_descriptor=plano, width=Mm(100)))
+    
+    #generar lista de InlineImage de fotos
+    lista_InlineImage_fotos = []
+    for foto in lista_fotos:
+        lista_InlineImage_fotos.append(docxtpl.InlineImage(doc, image_descriptor=foto, width=Mm(120)))
 
-    #descargar fotos y generar lista InlineImage
-    lista_fotos_inline = []
-    for foto in fotos:
-        print(foto)
-        url_foto = f"https://app.amigocloud.com/api/v1/related_tables/61142/files/{foto['source_amigo_id']}/{foto['amigo_id']}/{foto['filename']}"
-        try:
-            contenido = amigocloud.get(url_foto, raw=True)
-            ruta_salida = PATH_FOTOS + foto['amigo_id'] + '.jpg'
-            with open(ruta_salida, "wb") as f:
-                f.write(contenido)
-            lista_fotos_inline.append({'foto': docxtpl.InlineImage(doc, image_descriptor= ruta_salida, width=Mm(120))})
-        except Exception as e:
-            print(f"❌ Error al descargar {foto['filename']}: {e}")
-            
     firma_respon = None
-    if insp.responsable_tec == 'Rogelio Acuña Rodríguez':
+    if insp.tecnico_inspeccion == 'ROGELIO ACUÑA':
         firma_respon = docxtpl.InlineImage(doc, image_descriptor=PATH_FIRMAS + '\\firma_rogelio.png', width=Mm(60))
-    else:
+    elif insp.tecnico_inspeccion == 'JORGE ANDRES LOPEZ':
         firma_respon = docxtpl.InlineImage(doc, image_descriptor=PATH_FIRMAS + '\\firma_juan_pablo.png', width=Mm(60))
 
-    context = {'insp':insp, 'propiedades':propiedades, 'planos':lista_InlineImage, 'fotos':lista_fotos_inline, 'firma':firma_respon}
-
+    context = {'insp':insp, 'propiedades':propiedades, 'planos':lista_InlineImage_planos, 'fotos':lista_InlineImage_fotos, 'firma':firma_respon}
     doc.render(context)
 
     # formato de nombre de archivo: "123_CQ_01-01-2022_NOMBRE"
@@ -354,7 +366,7 @@ def generar_reporte(insp, propiedades, fotos, lista_planos):
     file_name = cod_nom[0] + '_IDCQ_' + insp.fecha_inspeccion.replace('/','-') + '_' + cod_nom[1] + '_' + str(insp.id)
 
     doc.save(PATH_INFORMES + file_name + '.docx')
-    return None
+    return True
 
 def main():
     while True:
@@ -371,7 +383,6 @@ def main():
         if count_lotes_cargado == -1 or count_areas_calculadas == -1:
             print('Error al cargar lotes quema, o error al actualziar areas de lotes quema')
             continue
-        
         for i in reg_nuevos:
             insp = obtener_inspeccion(i)
             if insp == None:
@@ -385,29 +396,25 @@ def main():
 
             # de lotes eliminar todos los duplicados, y solo se queda con el codigo y nombre de propiedad, esto sera el objeto de propiedades que son parte de la inspeccion
             props = eliminar_duplicados_y_conservar_campos(lotes, 'unidad_01', ['unidad_01', 'unidad_02'])
-            
 
             propiedades = propiedades_lotes(props, lotes)
             
             fotos = obtener_fotos(insp.amigo_id)
-            print(fotos)
-
             if len(fotos) == 0:
                 print(f'Inspeccion {i} no tiene fotos')
                 continue
 
-            lista_planos = generar_planos(insp, propiedades)
+            lista_fotos = descargar_fotos(fotos)
+            if len(lista_fotos) == 0:
+                print(f'No se puede descargar fotos de inspeccion: {i}')
+                continue
 
-            print(lista_planos)
+            lista_planos = generar_planos(insp, propiedades)
             
-            '''
-            #  print(insp)
-            # print(propiedades)
-            print(fotos)
-            generar_reporte(insp, propiedades, fotos, lista_planos)
+            generar_reporte(insp, propiedades, lista_fotos, lista_planos)
             cambiar_estado_informe(i)
             print(f'Informe generado de {insp.canhero}')
-            '''
+            
 
 if __name__ == "__main__":
     main()
