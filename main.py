@@ -5,6 +5,8 @@ from shapely import wkb
 import contextily as ctx
 import matplotlib.pyplot as plt
 import logging
+from rasterio.plot import show
+import rasterio
 
 from docxtpl import DocxTemplate
 import docxtpl
@@ -22,16 +24,14 @@ from amigocloud import AmigoCloud
 from config import API_TOKEN_AMIGOCLOUD_QUEMA, PATH_FOTOS
 
 from config import PROYECTO_ID
-from config import BUSCAR_REG_NUEVOS
-from config import CARGAR_LOTES_QUEMA
-from config import CALC_AREA_LOTES
-from config import CALC_TOTAL_INSP
 
 from config import PATH_TEMPLATE_INFORME
 from config import PATH_INFORMES
 from config import PATH_PLANOS
 from config import PATH_FOTOS
 from config import PATH_FIRMAS
+
+path_tif = "G:/Ingenio Azucarero Guabira S.A/UTEA - SEMANAL - CATASTRO/RASTER/SENTINEL_2025-07-26_UTM.tif"
 
 ##==================================================================================
 ##==================================================================================
@@ -234,7 +234,7 @@ def eliminar_duplicados_y_conservar_campos(lista, campo_clave, campos_a_conserva
             nueva_lista.append(nuevo_diccionario)
     return nueva_lista
 
-def propiedades_lotes(props):
+def propiedades_lotes(props, lotes):
     # recorrer las propiedades, y agregar los lotes correspondientes
     # se crea una lista de objetos propiedad con los respectivos lotes agregados a cada propiedad
     propiedades = []
@@ -277,28 +277,37 @@ def generar_planos(insp, propiedades):
         df['geometria'] = df['geometria'].apply(convertir_wkb)
 
         #Convertir a GeoDataFrame
-        data = gpd.GeoDataFrame(df, geometry='geometria')
+        data = gpd.GeoDataFrame(df, geometry='geometria', crs="EPSG:32720")
 
-        data['coords'] = data['geometria'].apply(lambda x: x.representative_point().coords[:])
-        data['coords'] = [coords[0] for coords in data['coords']]
+        #data['coords'] = data['geometria'].apply(lambda x: x.representative_point().coords[:])
+        #data['coords'] = [coords[0] for coords in data['coords']]
 
-        data.crs = "EPSG:4326"
-        data = data.to_crs(epsg=3857)
+        #data.crs = "EPSG:4326"
+        #data = data.to_crs(epsg=32720)
         
-        fig = plt.figure(i, figsize=(20,20))
+        #data.crs = "EPSG:4326"
+        #data = data.to_crs(epsg=3857)
+        
+        fig = plt.figure(figsize=(20,20))
         ax = None
         ax = fig.add_subplot()
 
         data.apply(lambda x: ax.annotate(text=x.unidad_05 + ' \n' + str(x.area) + ' ha', xy=x.geometria.centroid.coords[0], ha='center', va='center', color='black', fontsize=12, weight=1000, bbox=dict(facecolor=(1,1,1,0.3), edgecolor='none', pad=0)), axis=1);
     
-        minx, miny, maxx, maxy = data.total_bounds
-        ax.set_xlim(minx - 500, maxx + 500)
-        ax.set_ylim(miny - 400, maxy + 400)
-
         data.plot(ax=ax, edgecolor='r', facecolor=(0,0,0,0), linewidth=2, figsize=(20,20))
     
-        ctx.add_basemap(ax, source=ctx.providers.Esri.WorldImagery)
-        ax.set_axis_off()
+        # Cargar la imagen TIFF con rasterio
+        with rasterio.open(path_tif) as src:
+            extent = [src.bounds.left, src.bounds.right, src.bounds.bottom, src.bounds.top]  # Límites geoespaciales
+            img = src.read([1, 2, 3])  # Leer las bandas RGB
+        # Crear el plano
+        show(img, transform=src.transform, ax=ax)
+
+        #minx, miny, maxx, maxy = data.total_bounds
+        #ax.set_xlim(minx - 500, maxx + 500)
+        #ax.set_ylim(miny - 400, maxy + 400)
+
+        #ax.set_axis_off()
         ax.set_title(str(propiedad.unidad_01) + ' / ' + str(propiedad.unidad_02), fontsize=20)
         path = PATH_PLANOS + str(insp.amigo_id) + '_' + str(propiedad.unidad_01) + '.jpeg'
         lista_planos.append(path)
@@ -366,25 +375,33 @@ def main():
         for i in reg_nuevos:
             insp = obtener_inspeccion(i)
             if insp == None:
-                print(f'Error, no se pudo obtener datos de inspeccion: {id}')
+                print(f'Error, no se pudo obtener datos de inspeccion: {i}')
                 continue
             
             lotes = obtener_lotes(i)
             if len(lotes) == 0:
-                print(f'Error, no se pudo obtener lotes quema: {id}')
+                print(f'Error, no se pudo obtener lotes quema: {i}')
                 continue
 
             # de lotes eliminar todos los duplicados, y solo se queda con el codigo y nombre de propiedad, esto sera el objeto de propiedades que son parte de la inspeccion
             props = eliminar_duplicados_y_conservar_campos(lotes, 'unidad_01', ['unidad_01', 'unidad_02'])
-            print(props)
-            '''
-            propiedades = propiedades_lotes(props)
+            
+
+            propiedades = propiedades_lotes(props, lotes)
+            
             fotos = obtener_fotos(insp.amigo_id)
+            print(fotos)
 
             if len(fotos) == 0:
                 print(f'Inspeccion {i} no tiene fotos')
+                continue
+
             lista_planos = generar_planos(insp, propiedades)
-            print(insp)
+
+            print(lista_planos)
+            
+            '''
+            #  print(insp)
             # print(propiedades)
             print(fotos)
             generar_reporte(insp, propiedades, fotos, lista_planos)

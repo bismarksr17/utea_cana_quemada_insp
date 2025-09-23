@@ -10,3 +10,4 @@ gevent
 socketIO_client
 sqlalchemy
 psycopg2
+rasterio
