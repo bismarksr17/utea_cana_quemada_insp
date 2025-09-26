@@ -389,6 +389,12 @@ def main():
                 print(f'Error, no se pudo obtener datos de inspeccion: {i}')
                 continue
             
+            estado_suma = sumar_total_area_inspeccion(i)
+
+            if estado_suma == -1:
+                print(f'Error al calcular suma de area y estimado de id: {i}')
+                continue
+            
             lotes = obtener_lotes(i)
             if len(lotes) == 0:
                 print(f'Error, no se pudo obtener lotes quema: {i}')
